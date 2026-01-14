@@ -1,0 +1,34 @@
+# Hytale Dedicated Server - Local Build (with game files)
+# For personal use only - DO NOT push to public registries
+#
+# This Dockerfile includes game files in the image.
+# Use docker-compose.local.yml with this file.
+
+FROM eclipse-temurin:25-jre
+
+LABEL org.opencontainers.image.title="Hytale Server (Local)"
+LABEL org.opencontainers.image.description="Hytale dedicated server with game files (personal use only)"
+
+ENV JVM_OPTS="-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+
+RUN groupadd -g 1001 hytale && \
+    useradd -u 1001 -g hytale -m -d /home/hytale hytale
+
+WORKDIR /server
+
+# Copy game files (requires ./game/ directory with downloaded files)
+COPY --chown=hytale:hytale game/Server/HytaleServer.jar ./
+COPY --chown=hytale:hytale game/Server/HytaleServer.aot ./
+COPY --chown=hytale:hytale game/Assets.zip ./
+
+RUN mkdir -p universe logs mods .cache && \
+    chown -R hytale:hytale /server
+
+USER hytale
+
+EXPOSE 5520/udp
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD pgrep -f HytaleServer.jar || exit 1
+
+CMD ["sh", "-c", "if [ -f HytaleServer.aot ]; then exec java $JVM_OPTS -XX:AOTCache=HytaleServer.aot -jar HytaleServer.jar --assets Assets.zip; else exec java $JVM_OPTS -jar HytaleServer.jar --assets Assets.zip; fi"]

@@ -1,9 +1,10 @@
-# Hytale Server with Lazytainer (auto-idle)
-# Uses pre-built image from Docker Hub
+# Hytale Server - Local Build Version
+# Builds image locally with game files baked in (for personal use only)
 #
-# Before starting:
-# 1. Download game files: See README.md
-# 2. Place files in ./game/ directory
+# Usage: docker compose -f docker-compose.local.yml up -d
+#
+# Note: This builds a local image with game files included.
+# Do NOT push this image to a public registry (licensing violation).
 
 services:
   lazytainer:
@@ -24,7 +25,10 @@ services:
     network_mode: bridge
 
   hytale:
-    image: jpyke3/hytale-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: hytale-server:local
     container_name: hytale-server
     restart: unless-stopped
     labels:
@@ -35,16 +39,11 @@ services:
     environment:
       - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200
     volumes:
-      # Game files (download separately - see README.md)
-      - ./game/Server/HytaleServer.jar:/server/HytaleServer.jar:ro
-      - ./game/Server/HytaleServer.aot:/server/HytaleServer.aot:ro
-      - ./game/Assets.zip:/server/Assets.zip:ro
-      # Persistent data
+      # Persistent data only (game files baked into image)
       - ./universe:/server/universe
       - ./logs:/server/logs
       - ./mods:/server/mods
       - ./config:/server/config
-      # Machine ID for auth persistence (optional)
       - ./machine-id:/etc/machine-id:ro
     stdin_open: true
     tty: true

@@ -1,67 +1,114 @@
 # Hytale Server Docker
 
-A Docker-based Hytale dedicated server with ARM64 support and Lazytainer integration for automatic idle shutdown.
+[![Build and Push Docker Image](https://github.com/JPyke3/hytale-server/actions/workflows/docker-build.yml/badge.svg)](https://github.com/JPyke3/hytale-server/actions/workflows/docker-build.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/jpyke3/hytale-server)](https://hub.docker.com/r/jpyke3/hytale-server)
+
+A Docker-based Hytale dedicated server with ARM64/AMD64 support and Lazytainer integration for automatic idle shutdown.
 
 ## Features
 
-- **ARM64 Native**: Runs natively on Apple Silicon and ARM servers
-- **Lazytainer Integration**: Automatically stops when idle, restarts on connection
+- **Multi-Architecture**: Pre-built images for AMD64 and ARM64 (Apple Silicon, Raspberry Pi, AWS Graviton)
+- **Lazytainer Integration**: Automatically stops when idle, restarts on connection (saves RAM)
 - **Java 25**: Uses official Adoptium Temurin JRE
-- **Persistent Data**: Universe, logs, mods, and config survive container rebuilds
-- **AOT Cache**: Faster startup using ahead-of-time compilation when available
-
-## Requirements
-
-- Docker with Compose v2
-- 4GB+ RAM (8GB recommended)
-- Hytale game license for authentication
-- UDP port 5520 open/forwarded
+- **Non-root**: Runs as unprivileged user for security
+- **AOT Cache**: Faster startup when HytaleServer.aot is provided
 
 ## Quick Start
 
-### 1. Download Game Files
-
-Use the official Hytale Downloader CLI:
+### 1. Pull the Image
 
 ```bash
-# Download the downloader
-curl -sL https://downloader.hytale.com/hytale-downloader.zip -o hytale-downloader.zip
-unzip hytale-downloader.zip
+docker pull jpyke3/hytale-server:latest
+```
 
-# Run it (requires browser authentication)
+### 2. Download Game Files
+
+Game files are copyrighted by Hypixel Studios and require authentication to download. You must download them separately:
+
+```bash
+# Create project directory
+mkdir hytale-server && cd hytale-server
+
+# Download the official Hytale Downloader
+curl -sL https://downloader.hytale.com/hytale-downloader.zip -o downloader.zip
+unzip downloader.zip
+
+# Run the downloader (requires browser authentication)
 # On Linux:
+chmod +x hytale-downloader-linux-amd64
 ./hytale-downloader-linux-amd64
 
-# On macOS (via Docker):
+# On macOS (via Docker, since no native binary):
 docker run -it --rm --platform linux/amd64 -v "$(pwd):/data" -w /data debian:bookworm-slim \
-  bash -c 'chmod +x hytale-downloader-linux-amd64 && ./hytale-downloader-linux-amd64'
+  bash -c 'apt-get update && apt-get install -y ca-certificates && chmod +x hytale-downloader-linux-amd64 && ./hytale-downloader-linux-amd64'
 
-# Extract to game directory
+# Extract game files
 unzip *.zip -d game/
 ```
 
-### 2. Generate machine-id (macOS)
-
-```bash
-ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID | \
-  awk -F'"' '{print $4}' | tr -d '-' | tr '[:upper:]' '[:lower:]' > machine-id
+After extraction, you should have:
+```
+game/
+├── Server/
+│   ├── HytaleServer.jar
+│   └── HytaleServer.aot
+└── Assets.zip
 ```
 
-Or on Linux, just use `/etc/machine-id`.
+### 3. Create docker-compose.yml
 
-### 3. Start the Server
+```yaml
+services:
+  lazytainer:
+    image: ghcr.io/vmorganp/lazytainer:latest
+    ports:
+      - "5520:5520/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "lazytainer.group.hytale.ports=5520"
+      - "lazytainer.group.hytale.sleepMethod=stop"
+      - "lazytainer.group.hytale.inactiveTimeout=300"
+    restart: unless-stopped
+    network_mode: bridge
+
+  hytale:
+    image: jpyke3/hytale-server:latest
+    container_name: hytale-server
+    restart: unless-stopped
+    labels:
+      - "lazytainer.group=hytale"
+    network_mode: service:lazytainer
+    depends_on:
+      - lazytainer
+    environment:
+      - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC
+    volumes:
+      - ./game/Server/HytaleServer.jar:/server/HytaleServer.jar:ro
+      - ./game/Server/HytaleServer.aot:/server/HytaleServer.aot:ro
+      - ./game/Assets.zip:/server/Assets.zip:ro
+      - ./universe:/server/universe
+      - ./logs:/server/logs
+      - ./mods:/server/mods
+    stdin_open: true
+    tty: true
+```
+
+### 4. Start the Server
 
 ```bash
-docker compose build
 docker compose up -d
 ```
 
-### 4. Authenticate
+### 5. Authenticate
 
 ```bash
 docker attach hytale-server
-# In console: /auth login device
+# In console:
+/auth login device
 # Follow the URL to authenticate
+# Then persist credentials:
+/auth persistence Encrypted
 # Detach: Ctrl+P Ctrl+Q
 ```
 
@@ -71,7 +118,7 @@ docker attach hytale-server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JVM_OPTS` | `-Xms2G -Xmx6G -XX:+UseG1GC` | JVM memory and GC settings |
+| `JVM_OPTS` | `-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200` | JVM memory and GC settings |
 
 ### Lazytainer Settings
 
@@ -81,37 +128,59 @@ docker attach hytale-server
 | `sleepMethod` | stop | Fully stops container to free RAM |
 | `minPacketThreshold` | 30 | Packets needed to wake server |
 
+### Volume Mounts
+
+| Container Path | Description |
+|----------------|-------------|
+| `/server/HytaleServer.jar` | Server executable (required) |
+| `/server/Assets.zip` | Game assets (required) |
+| `/server/HytaleServer.aot` | AOT cache for faster startup (optional) |
+| `/server/universe` | World saves |
+| `/server/logs` | Server logs |
+| `/server/mods` | Installed mods |
+
 ## Network
 
 - **Port**: 5520/UDP (QUIC protocol)
 - **Firewall**: Must allow UDP, not TCP
 - **Connect**: `your-server-ip:5520`
 
-## File Structure
+## Local Build (Alternative)
 
-```
-Hytale-Server/
-├── Dockerfile
-├── docker-compose.yml
-├── game/               # Game files (Server/, Assets.zip)
-├── universe/           # World saves
-├── logs/               # Server logs
-├── mods/               # Installed mods
-├── config/             # Configuration files
-└── machine-id          # Device ID for auth persistence
+If you prefer to build locally with game files baked in (personal use only):
+
+```bash
+# Clone the repo
+git clone https://github.com/JPyke3/hytale-server.git
+cd hytale-server
+
+# Download game files to ./game/
+# ... (see step 2 above)
+
+# Build and run
+docker compose -f docker-compose.local.yml up -d
 ```
 
 ## Updating
 
 ```bash
+# Pull latest image
+docker compose pull
+
 # Download new game files
 ./hytale-downloader-linux-amd64
 unzip -o *.zip -d game/
 
-# Rebuild and restart
-docker compose build --no-cache
+# Restart
 docker compose up -d
 ```
+
+## Requirements
+
+- Docker with Compose v2
+- 4GB+ RAM (8GB recommended)
+- Hytale game license for authentication
+- UDP port 5520 open/forwarded
 
 ## Based On
 
@@ -120,4 +189,4 @@ docker compose up -d
 
 ## License
 
-The Dockerfile and configuration are MIT licensed. Hytale game files are subject to Hypixel Studios' terms of service.
+The Dockerfile and configuration are MIT licensed. Hytale game files are subject to Hypixel Studios' terms of service and cannot be redistributed.
