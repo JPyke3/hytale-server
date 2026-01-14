@@ -18,10 +18,11 @@ ENV JVM_OPTS="-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
 # Auto-update on startup (set to "false" to disable)
 ENV AUTO_UPDATE="true"
 
-# Install dependencies for auto-update
+# Install dependencies for auto-update and server authentication
 # qemu-user-static allows running x86-64 downloader on ARM64
+# curl is used for OAuth token refresh and game session creation
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends unzip ca-certificates qemu-user-static && \
+    apt-get install -y --no-install-recommends unzip ca-certificates qemu-user-static curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Download hytale-downloader for auto-updates

@@ -8,6 +8,7 @@ A Docker-based Hytale dedicated server with ARM64/AMD64 support and Lazytainer i
 ## Features
 
 - **Auto-Updates**: Automatically downloads new game versions on container startup (works on ARM64 via QEMU emulation)
+- **Automatic Authentication**: OAuth tokens refresh automatically on startup - no manual login needed after initial setup
 - **Multi-Architecture**: Native ARM64 and AMD64 support (Apple Silicon, Raspberry Pi, AWS Graviton, x86 servers)
 - **Lazytainer Integration**: Automatically stops when idle, restarts on connection (saves RAM)
 - **Java 25**: Uses official Adoptium Temurin JRE
@@ -16,19 +17,17 @@ A Docker-based Hytale dedicated server with ARM64/AMD64 support and Lazytainer i
 
 ## Quick Start
 
-### 1. Pull the Image
+### 1. Create Directory Structure
 
 ```bash
-docker pull jpyke3/hytale-server:latest
+mkdir -p data universe logs mods game .cache
 ```
 
-### 2. Authenticate with Hytale (one-time setup)
+### 2. Get Downloader Credentials (for auto-updates)
 
 Game files require authentication. Run the downloader once to save credentials:
 
 ```bash
-mkdir -p data
-
 # Download the Hytale Downloader
 curl -sL https://downloader.hytale.com/hytale-downloader.zip -o data/downloader.zip
 unzip data/downloader.zip -d data/
@@ -43,9 +42,26 @@ docker run -it --rm --platform linux/amd64 -v "$(pwd)/data:/data" -w /data debia
   bash -c 'apt-get update && apt-get install -y ca-certificates && chmod +x hytale-downloader-linux-amd64 && ./hytale-downloader-linux-amd64'
 ```
 
-This creates `data/.hytale-downloader-credentials.json` - the container will use this to auto-download game files.
+This creates `data/.hytale-downloader-credentials.json` for game file downloads.
 
-### 3. Create docker-compose.yml
+### 3. Get Server Authentication (for player connections)
+
+> **Why is this needed?**
+>
+> Hytale servers must authenticate with Hytale's session service to validate players connecting to your server. Without authentication, players see "Server authentication unavailable" when trying to join.
+>
+> The `get-server-token.sh` script performs a one-time OAuth login to get a refresh token (valid 30 days, auto-renews). This enables the container to automatically re-authenticate on every restart - no manual `/auth login` needed!
+
+```bash
+# Download and run the setup script
+curl -sL https://raw.githubusercontent.com/JPyke3/hytale-server/main/get-server-token.sh -o get-server-token.sh
+chmod +x get-server-token.sh
+./get-server-token.sh
+```
+
+Follow the browser prompt to authenticate. This creates `data/.hytale-server-credentials.json`.
+
+### 4. Create docker-compose.yml
 
 ```yaml
 services:
@@ -59,6 +75,8 @@ services:
       - "lazytainer.group.hytale.ports=5520"
       - "lazytainer.group.hytale.sleepMethod=stop"
       - "lazytainer.group.hytale.inactiveTimeout=300"
+      - "lazytainer.group.hytale.minPacketThreshold=2"
+      - "lazytainer.group.hytale.pollRate=5"
     restart: unless-stopped
     network_mode: bridge
 
@@ -72,38 +90,85 @@ services:
     depends_on:
       - lazytainer
     environment:
-      - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC
+      - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200
       - AUTO_UPDATE=true
     volumes:
-      # Credentials for auto-download
+      # Credentials
       - ./data/.hytale-downloader-credentials.json:/server/.hytale-downloader-credentials.json:ro
-      # Game files (auto-downloaded on first start)
+      - ./data/.hytale-server-credentials.json:/server/.hytale-server-credentials.json
+      # Server configuration (persisted)
+      - ./data/config.json:/server/config.json
+      - ./data/permissions.json:/server/permissions.json
+      - ./data/bans.json:/server/bans.json
+      - ./data/whitelist.json:/server/whitelist.json
+      # Game files and data
       - ./game:/server/game
-      # Persistent data
       - ./universe:/server/universe
       - ./logs:/server/logs
       - ./mods:/server/mods
+      - ./.cache:/server/.cache
     stdin_open: true
     tty: true
+    mem_limit: 8g
+    mem_reservation: 2g
 ```
 
-### 4. Start the Server
+### 5. Create Initial Config Files
+
+```bash
+# Create empty config files (server will populate them)
+echo '{}' > data/config.json
+echo '{"users":{},"groups":{"Default":[],"OP":["*"]}}' > data/permissions.json
+echo '[]' > data/bans.json
+echo '[]' > data/whitelist.json
+```
+
+### 6. Start the Server
 
 ```bash
 docker compose up -d
 ```
 
-### 5. Authenticate
+That's it! The server will:
+1. Download game files automatically (first start takes a few minutes)
+2. Authenticate using your stored credentials
+3. Start accepting player connections
+
+## Authentication
+
+### Two Credential Files
+
+This server uses two separate credential files:
+
+| File | Purpose | Created By |
+|------|---------|------------|
+| `.hytale-downloader-credentials.json` | Download game files (auto-updates) | Hytale Downloader |
+| `.hytale-server-credentials.json` | Authenticate server for player connections | `get-server-token.sh` |
+
+### How Automatic Authentication Works
+
+On every container startup:
+1. Entrypoint reads the stored OAuth refresh token
+2. Exchanges it for a new access token via Hytale OAuth
+3. Creates a game session via the Session Service API
+4. Passes session/identity tokens to the server
+5. Server accepts player connections
+
+The refresh token is valid for 30 days and auto-renews on each use.
+
+### Manual Authentication (Alternative)
+
+If you prefer not to use `get-server-token.sh`, you can authenticate manually after each container restart:
 
 ```bash
 docker attach hytale-server
 # In console:
 /auth login device
 # Follow the URL to authenticate
-# Then persist credentials:
-/auth persistence Encrypted
 # Detach: Ctrl+P Ctrl+Q
 ```
+
+Note: This must be done every time the container restarts.
 
 ## Configuration
 
@@ -120,26 +185,24 @@ docker attach hytale-server
 |---------|-------|-------------|
 | `inactiveTimeout` | 300 | Seconds before stopping (5 min) |
 | `sleepMethod` | stop | Fully stops container to free RAM |
-| `minPacketThreshold` | 30 | Packets needed to wake server |
+| `minPacketThreshold` | 2 | Packets needed to wake server |
+| `pollRate` | 5 | Seconds between activity checks |
 
 ### Volume Mounts
 
-| Container Path | Description |
-|----------------|-------------|
-| `/server/game` | Auto-downloaded game files (recommended) |
-| `/server/.hytale-downloader-credentials.json` | Credentials for auto-updates |
-| `/server/universe` | World saves |
-| `/server/logs` | Server logs |
-| `/server/mods` | Installed mods |
-| `/server/config` | Server configuration |
-
-**Legacy mounts** (if `AUTO_UPDATE=false`):
-
-| Container Path | Description |
-|----------------|-------------|
-| `/server/HytaleServer.jar` | Server executable |
-| `/server/Assets.zip` | Game assets |
-| `/server/HytaleServer.aot` | AOT cache for faster startup |
+| Host Path | Container Path | Description |
+|-----------|----------------|-------------|
+| `./data/.hytale-server-credentials.json` | `/server/.hytale-server-credentials.json` | OAuth refresh token for auto-auth |
+| `./data/.hytale-downloader-credentials.json` | `/server/.hytale-downloader-credentials.json:ro` | Game download credentials |
+| `./data/config.json` | `/server/config.json` | Server configuration |
+| `./data/permissions.json` | `/server/permissions.json` | Player permissions (OP, groups) |
+| `./data/bans.json` | `/server/bans.json` | Banned players |
+| `./data/whitelist.json` | `/server/whitelist.json` | Whitelisted players |
+| `./game` | `/server/game` | Game files (auto-downloaded) |
+| `./universe` | `/server/universe` | World saves, player data |
+| `./logs` | `/server/logs` | Server logs |
+| `./mods` | `/server/mods` | Installed mods |
+| `./.cache` | `/server/.cache` | Optimized files cache |
 
 ## Network
 
@@ -147,20 +210,50 @@ docker attach hytale-server
 - **Firewall**: Must allow UDP, not TCP
 - **Connect**: `your-server-ip:5520`
 
-## Local Build (Alternative)
+## Troubleshooting
 
-If you prefer to build locally with game files baked in (personal use only):
+### "Server authentication unavailable" / Players can't connect
+
+The server isn't authenticated. Run `get-server-token.sh` on the host, then restart the container.
+
+Or authenticate manually:
+```bash
+docker attach hytale-server
+/auth login device
+# Complete browser auth, then Ctrl+P Ctrl+Q to detach
+```
+
+### Lost OP status / Permissions reset
+
+Ensure `permissions.json` is mounted as a volume. Check that `./data/permissions.json` exists on the host.
+
+To restore OP:
+```bash
+# Edit permissions.json, change your user's group to "OP"
+docker compose restart hytale
+```
+
+### Lazytainer not waking server
+
+Check `minPacketThreshold` is set low (2 is recommended). High values require many connection attempts before waking.
 
 ```bash
-# Clone the repo
-git clone https://github.com/JPyke3/hytale-server.git
-cd hytale-server
+docker logs hytale-server-lazytainer-1
+```
 
-# Download game files to ./game/
-# ... (see step 2 above)
+### "Connection Aborted by Peer (0)"
 
-# Build and run
-docker compose -f docker-compose.local.yml up -d
+Server authentication failed. Check logs for auth errors:
+```bash
+docker logs hytale-server | grep -i auth
+```
+
+### Refresh token expired (after 30 days of inactivity)
+
+Re-run `get-server-token.sh` to get a new token:
+```bash
+./get-server-token.sh
+docker compose restart hytale
 ```
 
 ## Auto-Updates
@@ -172,45 +265,29 @@ The container automatically checks for and downloads new Hytale game versions on
 On every container start:
 1. Checks the Hytale servers for the latest available version
 2. Compares with the currently installed version (stored in `game/.current-version`)
-3. Downloads and extracts new files if an update is available (~1.4GB)
+3. Downloads and extracts new files if an update is available (~3.5GB)
 4. Keeps one backup of the previous version
 5. Starts the game server
 
 ### ARM64 Support
 
-Auto-updates work on ARM64 (Apple Silicon, Raspberry Pi, AWS Graviton) via QEMU emulation. The container includes `qemu-user-static` which runs the x86-64 Hytale downloader binary transparently. No additional configuration needed.
+Auto-updates work on ARM64 (Apple Silicon, Raspberry Pi, AWS Graviton) via QEMU emulation. The container includes `qemu-user-static` which runs the x86-64 Hytale downloader binary transparently.
 
 ### Disable Auto-Updates
-
-To manage game files manually:
 
 ```yaml
 environment:
   - AUTO_UPDATE=false
 ```
 
-Then mount game files directly (legacy mode):
-```yaml
-volumes:
-  - ./game/Server/HytaleServer.jar:/server/HytaleServer.jar:ro
-  - ./game/Server/HytaleServer.aot:/server/HytaleServer.aot:ro
-  - ./game/Assets.zip:/server/Assets.zip:ro
-```
+## Local Build (Alternative)
 
-## Manual Updates (Legacy)
-
-If auto-updates are disabled, update manually:
+If you prefer to build locally with game files baked in (personal use only):
 
 ```bash
-# Pull latest image
-docker compose pull
-
-# Download new game files
-./hytale-downloader-linux-amd64
-unzip -o *.zip -d game/
-
-# Restart
-docker compose up -d
+git clone https://github.com/JPyke3/hytale-server.git
+cd hytale-server
+docker compose -f docker-compose.local.yml up -d
 ```
 
 ## Requirements
@@ -223,6 +300,7 @@ docker compose up -d
 ## Based On
 
 - [Official Hytale Server Manual](https://support.hytale.com/hc/en-us/articles/45326769420827-Hytale-Server-Manual)
+- [Server Provider Authentication Guide](https://support.hytale.com/hc/en-us/articles/45326769420827)
 - [Lazytainer](https://github.com/vmorganp/Lazytainer)
 
 ## License

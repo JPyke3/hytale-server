@@ -15,7 +15,7 @@ services:
   lazytainer:
     image: ghcr.io/vmorganp/lazytainer:latest
     environment:
-      VERBOSE: "false"
+      VERBOSE: "true"
     ports:
       - "5520:5520/udp"
     volumes:
@@ -24,7 +24,7 @@ services:
       - "lazytainer.group.hytale.ports=5520"
       - "lazytainer.group.hytale.sleepMethod=stop"
       - "lazytainer.group.hytale.inactiveTimeout=300"
-      - "lazytainer.group.hytale.minPacketThreshold=30"
+      - "lazytainer.group.hytale.minPacketThreshold=2"
       - "lazytainer.group.hytale.pollRate=5"
     restart: unless-stopped
     network_mode: bridge
@@ -45,6 +45,14 @@ services:
     volumes:
       # Credentials for auto-download (run hytale-downloader once to generate)
       - ./data/.hytale-downloader-credentials.json:/server/.hytale-downloader-credentials.json:ro
+      # Server auth credentials (OAuth refresh token for automatic re-authentication)
+      # See: Server Provider Authentication Guide
+      - ./data/.hytale-server-credentials.json:/server/.hytale-server-credentials.json
+      # Server configuration files (permissions, bans, whitelist, config)
+      - ./data/config.json:/server/config.json
+      - ./data/permissions.json:/server/permissions.json
+      - ./data/bans.json:/server/bans.json
+      - ./data/whitelist.json:/server/whitelist.json
       # Game files - auto-downloaded or manually placed
       - ./game:/server/game
       # Persistent data
@@ -52,6 +60,8 @@ services:
       - ./logs:/server/logs
       - ./mods:/server/mods
       - ./config:/server/config
+      # Cache for optimized files (improves startup time)
+      - ./.cache:/server/.cache
       # Machine ID for auth persistence (optional)
       - ./machine-id:/etc/machine-id:ro
     stdin_open: true
