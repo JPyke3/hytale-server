@@ -1,0 +1,43 @@
+services:
+  lazytainer:
+    image: ghcr.io/vmorganp/lazytainer:latest
+    environment:
+      VERBOSE: "false"
+    ports:
+      - "5520:5520/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - "lazytainer.group.hytale.ports=5520"
+      - "lazytainer.group.hytale.sleepMethod=stop"
+      - "lazytainer.group.hytale.inactiveTimeout=300"
+      - "lazytainer.group.hytale.minPacketThreshold=30"
+      - "lazytainer.group.hytale.pollRate=5"
+    restart: unless-stopped
+    network_mode: bridge
+
+  hytale:
+    build:
+      context: ./game
+      dockerfile: ../Dockerfile
+    image: jacobpyke/hytale-server:latest
+    container_name: hytale-server
+    restart: unless-stopped
+    labels:
+      - "lazytainer.group=hytale"
+    network_mode: service:lazytainer
+    depends_on:
+      - lazytainer
+    environment:
+      - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+    volumes:
+      # Persistent data - survives container rebuilds
+      - ./universe:/server/universe
+      - ./logs:/server/logs
+      - ./mods:/server/mods
+      - ./config:/server/config
+      - ./machine-id:/etc/machine-id:ro
+    stdin_open: true
+    tty: true
+    mem_limit: 8g
+    mem_reservation: 2g

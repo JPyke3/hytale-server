@@ -1,0 +1,22 @@
+# Game files (downloaded separately, not redistributable)
+game/
+
+# Server data
+universe/
+logs/
+mods/
+.cache/
+
+# Configuration files with secrets
+config/
+*.json
+
+# Credentials
+machine-id
+.hytale-downloader-credentials.json
+
+# Downloader files
+data/
+*.zip
+hytale-downloader-*
+QUICKSTART.md
