@@ -7,6 +7,7 @@ A Docker-based Hytale dedicated server with ARM64/AMD64 support and Lazytainer i
 
 ## Features
 
+- **Auto-Updates**: Automatically downloads new game versions on container startup
 - **Multi-Architecture**: Pre-built images for AMD64 and ARM64 (Apple Silicon, Raspberry Pi, AWS Graviton)
 - **Lazytainer Integration**: Automatically stops when idle, restarts on connection (saves RAM)
 - **Java 25**: Uses official Adoptium Temurin JRE
@@ -119,6 +120,7 @@ docker attach hytale-server
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JVM_OPTS` | `-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200` | JVM memory and GC settings |
+| `AUTO_UPDATE` | `true` | Check for game updates on startup |
 
 ### Lazytainer Settings
 
@@ -132,12 +134,20 @@ docker attach hytale-server
 
 | Container Path | Description |
 |----------------|-------------|
-| `/server/HytaleServer.jar` | Server executable (required) |
-| `/server/Assets.zip` | Game assets (required) |
-| `/server/HytaleServer.aot` | AOT cache for faster startup (optional) |
+| `/server/game` | Auto-downloaded game files (recommended) |
+| `/server/.hytale-downloader-credentials.json` | Credentials for auto-updates |
 | `/server/universe` | World saves |
 | `/server/logs` | Server logs |
 | `/server/mods` | Installed mods |
+| `/server/config` | Server configuration |
+
+**Legacy mounts** (if `AUTO_UPDATE=false`):
+
+| Container Path | Description |
+|----------------|-------------|
+| `/server/HytaleServer.jar` | Server executable |
+| `/server/Assets.zip` | Game assets |
+| `/server/HytaleServer.aot` | AOT cache for faster startup |
 
 ## Network
 
@@ -161,7 +171,61 @@ cd hytale-server
 docker compose -f docker-compose.local.yml up -d
 ```
 
-## Updating
+## Auto-Updates
+
+The container can automatically check for and download new Hytale game versions on startup.
+
+### Setup Auto-Updates
+
+1. **Authenticate once** (generates credentials file):
+```bash
+# On Linux:
+./hytale-downloader-linux-amd64
+
+# On macOS (via Docker):
+docker run -it --rm --platform linux/amd64 -v "$(pwd)/data:/data" -w /data debian:bookworm-slim \
+  bash -c 'apt-get update && apt-get install -y ca-certificates && chmod +x hytale-downloader-linux-amd64 && ./hytale-downloader-linux-amd64'
+```
+
+2. **Ensure credentials are in place**:
+```bash
+# Credentials should be at:
+./data/.hytale-downloader-credentials.json
+```
+
+3. **Start the server** - it will auto-download game files:
+```bash
+docker compose up -d
+```
+
+### How It Works
+
+On every container start:
+1. Checks the Hytale servers for the latest available version
+2. Compares with the currently installed version
+3. Downloads and extracts new files if an update is available
+4. Keeps one backup of the previous version
+5. Starts the game server
+
+### Disable Auto-Updates
+
+To manage game files manually instead:
+
+```yaml
+environment:
+  - AUTO_UPDATE=false
+```
+
+Or mount game files directly (legacy mode):
+```yaml
+volumes:
+  - ./game/Server/HytaleServer.jar:/server/HytaleServer.jar:ro
+  - ./game/Assets.zip:/server/Assets.zip:ro
+```
+
+## Manual Updates (Legacy)
+
+If auto-updates are disabled, update manually:
 
 ```bash
 # Pull latest image

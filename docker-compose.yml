@@ -1,9 +1,15 @@
-# Hytale Server with Lazytainer (auto-idle)
+# Hytale Server with Lazytainer (auto-idle) and Auto-Updates
 # Uses pre-built image from Docker Hub
 #
-# Before starting:
+# Setup for auto-updates:
+# 1. Run the hytale-downloader once manually to authenticate
+# 2. Copy .hytale-downloader-credentials.json to ./data/
+# 3. Start the container - it will download game files automatically
+#
+# Or for manual game file management (legacy mode):
 # 1. Download game files: See README.md
 # 2. Place files in ./game/ directory
+# 3. Set AUTO_UPDATE=false
 
 services:
   lazytainer:
@@ -34,11 +40,13 @@ services:
       - lazytainer
     environment:
       - JVM_OPTS=-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+      # Auto-update: checks for new game versions on container start
+      - AUTO_UPDATE=true
     volumes:
-      # Game files (download separately - see README.md)
-      - ./game/Server/HytaleServer.jar:/server/HytaleServer.jar:ro
-      - ./game/Server/HytaleServer.aot:/server/HytaleServer.aot:ro
-      - ./game/Assets.zip:/server/Assets.zip:ro
+      # Credentials for auto-download (run hytale-downloader once to generate)
+      - ./data/.hytale-downloader-credentials.json:/server/.hytale-downloader-credentials.json:ro
+      # Game files - auto-downloaded or manually placed
+      - ./game:/server/game
       # Persistent data
       - ./universe:/server/universe
       - ./logs:/server/logs
