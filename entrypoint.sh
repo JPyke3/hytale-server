@@ -2,9 +2,18 @@
 set -e
 
 GAME_DIR="/server/game"
-VERSION_FILE="/server/.current-version"
-DOWNLOADER="/opt/hytale-downloader"
-CREDENTIALS_FILE="/server/.hytale-downloader-credentials.json"
+VERSION_FILE="/server/game/.current-version"
+DOWNLOADER_BIN="/opt/hytale-downloader"
+CREDENTIALS_INPUT="/server/.hytale-downloader-credentials.json"
+CREDENTIALS_WORK="/tmp/.hytale-downloader-credentials.json"
+
+# Use qemu for x86-64 emulation on ARM64
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    DOWNLOADER="qemu-x86_64-static $DOWNLOADER_BIN"
+else
+    DOWNLOADER="$DOWNLOADER_BIN"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,16 +34,24 @@ check_and_update() {
         return 0
     fi
 
-    if [ ! -f "$CREDENTIALS_FILE" ]; then
-        log_warn "No credentials file found at $CREDENTIALS_FILE"
+    if [ ! -f "$CREDENTIALS_INPUT" ]; then
+        log_warn "No credentials file found at $CREDENTIALS_INPUT"
         log_warn "Skipping update check - run downloader manually first to authenticate"
         return 0
     fi
+
+    # Copy credentials to writable location (downloader updates tokens)
+    cp "$CREDENTIALS_INPUT" "$CREDENTIALS_WORK"
+    cd /tmp  # Downloader looks for credentials in current directory
 
     log_info "Checking for Hytale server updates..."
 
     # Get available version from server
     AVAILABLE_VERSION=$($DOWNLOADER -print-version -skip-update-check 2>/dev/null || echo "")
+
+    # Try to save updated credentials back (if source is writable)
+    cp "$CREDENTIALS_WORK" "$CREDENTIALS_INPUT" 2>/dev/null || true
+    cd /server
 
     if [ -z "$AVAILABLE_VERSION" ]; then
         log_warn "Could not fetch available version - skipping update"
@@ -64,8 +81,12 @@ check_and_update() {
     TEMP_DIR=$(mktemp -d)
     DOWNLOAD_PATH="$TEMP_DIR/hytale-server.zip"
 
-    # Download new version
+    # Download new version (run from /tmp where credentials are)
+    cd /tmp
     if $DOWNLOADER -download-path "$DOWNLOAD_PATH" -skip-update-check; then
+        # Save updated credentials back if possible
+        cp "$CREDENTIALS_WORK" "$CREDENTIALS_INPUT" 2>/dev/null || true
+        cd /server
         log_info "Download complete, extracting..."
 
         # Backup current game files if they exist
@@ -91,6 +112,7 @@ check_and_update() {
     else
         log_error "Download failed - continuing with existing version"
         rm -rf "$TEMP_DIR"
+        cd /server
     fi
 }
 

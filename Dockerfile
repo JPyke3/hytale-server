@@ -19,12 +19,13 @@ ENV JVM_OPTS="-Xms2G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
 ENV AUTO_UPDATE="true"
 
 # Install dependencies for auto-update
+# qemu-user-static allows running x86-64 downloader on ARM64
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends unzip ca-certificates && \
+    apt-get install -y --no-install-recommends unzip ca-certificates qemu-user-static && \
     rm -rf /var/lib/apt/lists/*
 
 # Download hytale-downloader for auto-updates
-# Note: Only linux-amd64 binary available, runs via emulation on ARM64
+# Uses qemu-x86_64-static for emulation on ARM64
 ADD https://downloader.hytale.com/hytale-downloader.zip /tmp/downloader.zip
 RUN unzip /tmp/downloader.zip -d /tmp && \
     mv /tmp/hytale-downloader-linux-amd64 /opt/hytale-downloader && \
